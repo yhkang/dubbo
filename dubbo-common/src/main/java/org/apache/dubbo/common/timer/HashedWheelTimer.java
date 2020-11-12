@@ -426,6 +426,21 @@ public class HashedWheelTimer implements Timer {
 
         private long tick;
 
+        /**
+         * 时间轮
+         *
+         * 1 时间轮指针转动，时间轮周期开始。
+         *
+         * 2 清理用户主动取消的定时任务，这些定时任务在用户取消时，会记录到 cancelledTimeouts 队列中。在每次指针转动的时候，时间轮都会清理该队列。
+         *
+         * 3 将缓存在 timeouts 队列中的定时任务转移到时间轮中对应的槽中。
+         *
+         * 4 根据当前指针定位对应槽，处理该槽位的双向链表中的定时任务。
+         *
+         * 5 检测时间轮的状态。如果时间轮处于运行状态，则循环执行上述步骤，不断执行定时任务。如果时间轮处于停止状态，则执行下面的步骤获取到未被执行的定时任务并加入 unprocessedTimeouts 队列：遍历时间轮中每个槽位，并调用 clearTimeouts() 方法；对 timeouts 队列中未被加入槽中循环调用 poll()。
+         *
+         * 6 最后再次清理 cancelledTimeouts 队列中用户主动取消的定时任务。
+         */
         @Override
         public void run() {
             // Initialize the startTime.
@@ -442,13 +457,17 @@ public class HashedWheelTimer implements Timer {
                 final long deadline = waitForNextTick();
                 if (deadline > 0) {
                     int idx = (int) (tick & mask);
+                    // 2
                     processCancelledTasks();
                     HashedWheelBucket bucket =
                             wheel[idx];
+                    // 3
                     transferTimeoutsToBuckets();
+                    // 4
                     bucket.expireTimeouts(deadline);
                     tick++;
                 }
+                // 5
             } while (WORKER_STATE_UPDATER.get(HashedWheelTimer.this) == WORKER_STATE_STARTED);
 
             // Fill the unprocessedTimeouts so we can return them from stop() method.
@@ -464,6 +483,7 @@ public class HashedWheelTimer implements Timer {
                     unprocessedTimeouts.add(timeout);
                 }
             }
+            // 6
             processCancelledTasks();
         }
 
